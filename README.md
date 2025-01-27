@@ -25,8 +25,8 @@ A powerful web automation assistant that provides real-time browser control and 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ai-web-assistant.git
-cd ai-web-assistant
+git clone https://github.com/airhick/AIwebagent.git
+cd AIwebagent
 ```
 
 2. Install dependencies:
