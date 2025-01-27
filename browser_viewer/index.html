@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Browser Viewer</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        .browser-view {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .screenshot {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .info-panel {
+            background: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .console-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .console-output {
+            background: #1e1e1e;
+            color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            margin-bottom: 15px;
+        }
+        .console-input {
+            display: flex;
+            gap: 10px;
+        }
+        .console-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .console-input button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .status {
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .url {
+            color: #666;
+            word-break: break-all;
+        }
+        .task-queue {
+            margin-top: 20px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .task-item {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .task-status {
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+        .status-pending { background: #ffd700; }
+        .status-running { background: #87ceeb; }
+        .status-completed { background: #90ee90; }
+        .status-error { background: #ffcccb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="browser-view">
+            <div class="info-panel">
+                <p>Status: <span class="status" id="status">Initializing...</span></p>
+                <p>Current URL: <span class="url" id="current-url">-</span></p>
+                <p>Page Title: <span id="page-title">-</span></p>
+                <p>Last Updated: <span id="last-updated">-</span></p>
+            </div>
+            <img id="browser-screenshot" class="screenshot" src="" alt="Browser View">
+        </div>
+        <div class="console-panel">
+            <h2>Interactive Console</h2>
+            <div class="console-output" id="console-output"></div>
+            <div class="console-input">
+                <input type="text" id="task-input" placeholder="Enter your task here..." />
+                <button onclick="submitTask()">Execute</button>
+            </div>
+            <div class="task-queue" id="task-queue">
+                <h3>Task Queue</h3>
+                <!-- Task items will be added here dynamically -->
+            </div>
+        </div>
+    </div>
+    <script>
+        let ws = null;
+        let taskQueue = [];
+        let taskId = 0;
+
+        function connectWebSocket() {
+            ws = new WebSocket('ws://' + window.location.host + '/ws');
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                logToConsole('Connected to server', 'system');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                logToConsole('Disconnected from server. Reconnecting...', 'error');
+                setTimeout(connectWebSocket, 1000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                logToConsole('Connection error', 'error');
+            };
+        }
+
+        function handleWebSocketMessage(data) {
+            if (data.type === 'state_update') {
+                updateBrowserState(data.state);
+            } else if (data.type === 'task_update') {
+                updateTaskStatus(data.taskId, data.status, data.message);
+            } else if (data.type === 'console') {
+                logToConsole(data.message, data.level);
+            }
+        }
+
+        function updateBrowserState(state) {
+            document.getElementById('status').textContent = state.status;
+            document.getElementById('current-url').textContent = state.url;
+            document.getElementById('page-title').textContent = state.title;
+            document.getElementById('last-updated').textContent = state.timestamp;
+            document.getElementById('browser-screenshot').src = state.screenshot + '?t=' + new Date().getTime();
+        }
+
+        function submitTask() {
+            const input = document.getElementById('task-input');
+            const task = input.value.trim();
+            
+            if (!task) return;
+            
+            const currentTaskId = ++taskId;
+            const taskData = {
+                id: currentTaskId,
+                task: task,
+                timestamp: new Date().toISOString()
+            };
+            
+            addTaskToQueue(taskData);
+            ws.send(JSON.stringify({
+                type: 'task',
+                data: taskData
+            }));
+            
+            input.value = '';
+        }
+
+        function addTaskToQueue(taskData) {
+            taskQueue.push(taskData);
+            updateTaskQueueDisplay();
+        }
+
+        function updateTaskStatus(taskId, status, message) {
+            const taskElement = document.querySelector(`[data-task-id="${taskId}"]`);
+            if (taskElement) {
+                const statusElement = taskElement.querySelector('.task-status');
+                statusElement.className = `task-status status-${status.toLowerCase()}`;
+                statusElement.textContent = status;
+                
+                if (status === 'COMPLETED' || status === 'ERROR') {
+                    setTimeout(() => {
+                        taskQueue = taskQueue.filter(t => t.id !== taskId);
+                        updateTaskQueueDisplay();
+                    }, 5000);
+                }
+            }
+            
+            logToConsole(`Task ${taskId}: ${message}`, status.toLowerCase());
+        }
+
+        function updateTaskQueueDisplay() {
+            const queueElement = document.getElementById('task-queue');
+            queueElement.innerHTML = '<h3>Task Queue</h3>';
+            
+            taskQueue.forEach(task => {
+                const taskElement = document.createElement('div');
+                taskElement.className = 'task-item';
+                taskElement.setAttribute('data-task-id', task.id);
+                taskElement.innerHTML = `
+                    <span>${task.task}</span>
+                    <span class="task-status status-pending">PENDING</span>
+                `;
+                queueElement.appendChild(taskElement);
+            });
+        }
+
+        function logToConsole(message, level = 'info') {
+            const consoleOutput = document.getElementById('console-output');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${level}`;
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            consoleOutput.appendChild(logEntry);
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+
+        // Initialize WebSocket connection
+        connectWebSocket();
+
+        // Handle Enter key in input
+        document.getElementById('task-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                submitTask();
+            }
+        });
+    </script>
+</body>
+</html>
+        
